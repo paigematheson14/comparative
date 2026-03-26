@@ -155,21 +155,17 @@ for k in "${K_VALS[@]}"; do
         LNL=$(grep "Final -lnL:" "$OUTDIR/stdout_log.txt" | sed -E 's/.*Final -lnL: //')
         echo "k=$k, rep=$rep: lnL=$LNL"
         lnls+=("$LNL")
-    done
-
-    diff=$(echo "${lnls[0]} - ${lnls[1]}" | bc -l | tr -d '-')
-    echo "k=$k: ΔlnL between replicates = $diff"
-
-    # Use lnL from first replicate for best model selection
-    cmp=$(echo "${lnls[0]} < $best_lnl" | bc)
-    if [[ "$cmp" -eq 1 ]]; then
-        best_k=$k
-        best_lnl=${lnls[0]}
-    fi
 done
 ```
 
+# 4. Plot lineage specific gene gains and losses 
 
+# 5 GO enrichment analysis 
+Generate background gene sets using filtered.cafe.input.csv and Orthogroups.tsv
+
+To assign GO terms, (1) prepare merged annotation files from EGGNOG and Interproscan annotations (see folder in this repository for R scripts) (2) prepare background gene sets with GO terms
+
+Perform TOPGO enrichment analysis - use TOPGO.R script
 
 
 
