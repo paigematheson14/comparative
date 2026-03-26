@@ -94,6 +94,7 @@ write.tree(ultra_tree, file = "SpeciesTree_ultrametric_17Mya.txt")
 ```
 
 # Filter orthogroup gene count file (from Orthofinder) and modify it for CAFE 
+
 ```
 awk 'OFS="\t" {$NF=""; print}' Orthogroups.GeneCount.tsv > tmp \
 && awk '{print "(null)""\t"$0}' tmp > cafe.input.tsv \
@@ -102,6 +103,9 @@ awk 'OFS="\t" {$NF=""; print}' Orthogroups.GeneCount.tsv > tmp \
 
 python2 cafetutorial_clade_and_size_filter.py \
     -i cafe.input.tsv -o filtered.cafe.input.tsv -s 2
+```
+
+# Run CAFE using that input
 ```
 #!/bin/bash -e
 #SBATCH --account=uow03920
