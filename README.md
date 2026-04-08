@@ -172,7 +172,22 @@ Perform TOPGO enrichment analysis - use TOPGO.R script
 
 I created protein files for HSP40, HSP70, and HSP90 from uniprot and NCBI. I used both Calliphoridae and Dipteran genes (specific and more broad). 
 
-An example of my search was "HSP40" OR "DNAJ" AND "Calliphoridae" NOT partial NOT low quality". I also did "HSP40" OR "DNAJ" AND "Diptera" NOT partial NOT low quality" and combined everything (i.e., both Diptera + Calliphoridae for each database) into one fasta file per gene family. 
+An example of my search was "HSP40" OR "DNAJ" AND "Calliphoridae" NOT partial NOT low quality". I also did "HSP40" OR "DNAJ" AND "Diptera" NOT partial NOT low quality" and combined everything (i.e., both Diptera + Calliphoridae for each database) into one fasta file per gene family. But when I ran the below script, I ran a couple of the 'classified hsps' in BLAST and they came up with some weird bacterial/fungal stuff. I think it is better to create the .hmm based on domains. For HSP40, these are J-domains. 
+
+Download the PFAM hmm library
+```
+wget https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz
+gunzip Pfam-A.hmm.gz
+hmmpress Pfam-A.hmm
+```
+Then identify J-domains in our known HSP40 protein fasta
+```
+hmmscan \
+  --domtblout jd.domtblout \
+  Pfam-A.hmm \
+  hsp40_full.fasta
+```
+
 
 Then I ran this script:
 
