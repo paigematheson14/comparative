@@ -168,6 +168,97 @@ To assign GO terms, (1) prepare merged annotation files from EGGNOG and Interpro
 Perform TOPGO enrichment analysis - use TOPGO.R script
 
 
+# 6. Gene classification
+
+I created protein files for HSP40, HSP70, and HSP90 from uniprot and NCBI. I used both Calliphoridae and Dipteran genes (specific and more broad). 
+
+An example of my search was "HSP40" OR "DNAJ" AND "Calliphoridae" NOT partial NOT low quality". I also did "HSP40" OR "DNAJ" AND "Diptera" NOT partial NOT low quality" and combined everything (i.e., both Diptera + Calliphoridae for each database) into one fasta file per gene family. 
+
+Then I ran this script:
+
+```
+#!/bin/bash -e
+#SBATCH --account=uow03920
+#SBATCH --job-name=HSP40
+#SBATCH --time=12:00:00
+#SBATCH --cpus-per-task=6
+#SBATCH --mem=10G
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=paige.matheson14@gmail.com
+#SBATCH --output HSP40_%j.out
+#SBATCH --error HSP40_%j.err
+
+# Purge any loaded modules to avoid conflicts
+module purge
+
+# Load required modules
+ml BLAST/2.16.0-GCC-12.3.0 SeqKit/2.4.0 HMMER/3.4-GCC-12.3.0 CD-HIT/4.8.1-GCC-11.3.0 BLASTDB GCC/12.3.0 
+
+# Loop over each species/dataset
+for i in 01_hilli 02_quadrimaculata 03_stygia 04_vicina 06_cuprina; do
+    cd ${i}
+
+    echo "Processing ${i} ..."
+
+    # Step 1: Create BLAST database
+    makeblastdb -in ${i}_longest_isoforms_modified.faa -dbtype prot
+
+    # Step 2: BLASTp against known HSP40s
+    blastp -query ../hsp40_full.fasta \
+           -db ${i}_longest_isoforms_modified.faa \
+           -out ${i}_HSP40_blastp_results.out \
+           -evalue 1e-5 \
+           -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qlen slen"
+
+    # Step 3: Extract BLAST hit sequences
+    bash ../extract_hsp40.sh ${i}_HSP40_blastp_results.out ${i}_longest_isoforms_modified.faa ${i}_blast_hits.fasta
+
+    # Step 4: HMMER domain validation with custom HSP40 HMM
+    hmmsearch --cpu 4 \
+              --domtblout ${i}_hmmer_hsp40.domtblout \
+              ../hsp40.hmm \
+              ${i}_blast_hits.fasta
+
+    # Step 5: Filter significant hits (E-value <= 1e-3)
+    grep -v '^#' ${i}_hmmer_hsp40.domtblout | awk '$13 <= 1e-3 {print $1}' | sort | uniq > ${i}_pfam_confirmed_ids.txt
+
+    # Step 6: Extract confirmed HSP40 sequences
+    seqkit grep -f ${i}_pfam_confirmed_ids.txt ${i}_blast_hits.fasta > ${i}_confirmed_HSP40.fasta
+
+    # Step 7: Remove redundancy (CD-HIT 98% identity)
+    cd-hit -i ${i}_confirmed_HSP40.fasta -o ${i}_HSP40_final_cdhit.faa -c 0.98
+
+    cd ../
+done
+```
+
+The bash script is
+```
+#!/bin/bash
+
+# Inputs
+BLAST_FILE=$1             # e.g., blast_output.tsv
+FASTA_FILE=$2              # e.g., target_sequences.fasta
+OUTPUT_FASTA=$3            # e.g., extracted_hits.fasta
+
+# Step 1: Filter BLAST hits based on multiple criteria:
+
+awk '$3 >= 40 && $12 > 80 && $11 <= 1e-5 && ($4 / $13) * 100 >= 40 {print $2}' "$BLAST_FILE" | sort | uniq > hit_ids.txt
+
+# Step 2: Extract sequences from FASTA
+seqkit grep -f hit_ids.txt "$FASTA_FILE" > "$OUTPUT_FASTA"
+
+# Summary
+echo "Extracted $(wc -l < hit_ids.txt) sequences passing filters to $OUTPUT_FASTA"
+```
+
+This script
+> makes a blast database for our protein files
+> BLASTS known HSP40s (from the fastas we created) against my species proteins
+> Filters hits by similarity (% identity), alignment length, e-value
+> Validates domains with HMMER
+> Extracts confirmed sequences
+> Removes redundancy with CD-hit
 
 
 
