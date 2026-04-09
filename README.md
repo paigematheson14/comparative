@@ -176,7 +176,7 @@ An example of my search was "HSP40" OR "DNAJ" AND "Calliphoridae" NOT partial NO
 
 I did this instead:
 
-## HMM curation ( this is to ensure everything that we predict has a J domain)
+## HMM curation ( this is to ensure everything that we predict has a J domain; I only did this for hsp40 -- hsp70 and 90 I used the full proteins)
 Download the PFAM hmm library:
 ```
 wget https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz
