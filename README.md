@@ -174,28 +174,89 @@ I created protein files for HSP40, HSP70, and HSP90 from uniprot and NCBI. I use
 
 An example of my search was "HSP40" OR "DNAJ" AND "Calliphoridae" NOT partial NOT low quality". I also did "HSP40" OR "DNAJ" AND "Diptera" NOT partial NOT low quality" and combined everything (i.e., both Diptera + Calliphoridae for each database) into one fasta file per gene family. But when I ran the below script, I ran a couple of the 'classified hsps' in BLAST and they came up with some weird bacterial/fungal stuff. I think it is better to create the .hmm based on domains. For HSP40, these are J-domains. 
 
-Download the PFAM hmm library
+I did this instead:
+Filtered the fasta a bit just to remove duplicates (since we used two databases, probably overlap) and by HPD motif
+
+```
+seqkit grep -r -p HPD jdomains_60_80.fasta > jdomains_filtered.fasta
+```
+```
+seqkit rmdup -s jdomains_filtered.fasta > jdomains_nr.fasta
+```
+
+
+## HMM curation ( this is to ensure everything that we predict has a J domain)
+Download the PFAM hmm library:
 ```
 wget https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz
 gunzip Pfam-A.hmm.gz
 hmmpress Pfam-A.hmm
 ```
-Then identify J-domains in our known HSP40 protein fasta
+
+locate the domains in each of the sequences in the fasta file:
+
 ```
 hmmscan \
-  --domtblout jd.domtblout \
+  --cpu 6 \
+  --domtblout diptera_jdomain.domtblout \
   Pfam-A.hmm \
-  hsp40_full.fasta
+  known_hsp40.fasta
+```
+this produces the file diptera_jdomain.domtblout
+
+Then extract the protein sequence ids and remove duplicates:
+```
+grep -v '^#' diptera_jdomain.domtblout | awk '$2 ~ /PF00226/ {print $4}' | sort | uniq > jdomain_ids.txt
+```
+Then use seqkit to extract only the sequences that have PF00226 domain in the protein sequence id
+```
+seqkit grep -f jdomain_ids.txt known_hsp40.fasta > hsp40_jdomain.fasta
+```
+Remove duplicate records
+```
+seqkit rmdup -n hsp40_jdomain.fasta > hsp40_jdomain_dedup.fasta
+```
+Extract J-domains with length filter
+```
+grep -v '^#' diptera_jdomain.domtblout | \
+awk '$2 ~ /PF00226/ {
+  start=$18;
+  end=$19;
+  len=end-start+1;
+  if(len>=60 && len<=80)
+    print $4 "\t" start "\t" end
+}' > jdomain_coords.tsv
+```
+Extract the sequences
+```
+seqkit subseq \
+  --bed jdomain_coords.tsv \
+  hsp40_jdomain_dedup.fasta \
+  > jdomains_60_80.fasta
+```
+HPD filter
+```
+seqkit grep -s -p HPD jdomains_60_80.fasta > jdomains_filtered.fasta
+```
+Remove duplicates
+```
+seqkit rmdup -s jdomains_filtered.fasta > jdomains_nr.fasta
+```
+Multiple sequence alignment
+```
+mafft --auto jdomains_nr.fasta > jdomains_aligned.fasta
+```
+build the hmm 
+```
+hmmbuild hsp40.hmm jdomains_aligned.fasta
 ```
 
-
-Then I ran this script:
 
 ```
 #!/bin/bash -e
 #SBATCH --account=uow03920
 #SBATCH --job-name=HSP40
-#SBATCH --time=12:00:00
+#SBATCH --time=4:00:00
 #SBATCH --cpus-per-task=6
 #SBATCH --mem=10G
 #SBATCH --mail-type=ALL
@@ -209,71 +270,33 @@ module purge
 # Load required modules
 ml BLAST/2.16.0-GCC-12.3.0 SeqKit/2.4.0 HMMER/3.4-GCC-12.3.0 CD-HIT/4.8.1-GCC-11.3.0 BLASTDB GCC/12.3.0 
 
-# Loop over each species/dataset
 for i in 01_hilli 02_quadrimaculata 03_stygia 04_vicina 06_cuprina; do
     cd ${i}
 
     echo "Processing ${i} ..."
 
-    # Step 1: Create BLAST database
-    makeblastdb -in ${i}_longest_isoforms_modified.faa -dbtype prot
-
-    # Step 2: BLASTp against known HSP40s
-    blastp -query ../hsp40_full.fasta \
-           -db ${i}_longest_isoforms_modified.faa \
-           -out ${i}_HSP40_blastp_results.out \
-           -evalue 1e-5 \
-           -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qlen slen"
-
-    # Step 3: Extract BLAST hit sequences
-    bash ../extract_hsp40.sh ${i}_HSP40_blastp_results.out ${i}_longest_isoforms_modified.faa ${i}_blast_hits.fasta
-
-    # Step 4: HMMER domain validation with custom HSP40 HMM
+    # Step 1: HMM search directly on proteome
     hmmsearch --cpu 4 \
               --domtblout ${i}_hmmer_hsp40.domtblout \
               ../hsp40.hmm \
-              ${i}_blast_hits.fasta
+              ${i}_longest_isoforms_modified.faa
 
-    # Step 5: Filter significant hits (E-value <= 1e-3)
-    grep -v '^#' ${i}_hmmer_hsp40.domtblout | awk '$13 <= 1e-3 {print $1}' | sort | uniq > ${i}_pfam_confirmed_ids.txt
+    # Step 2: Filter significant hits
+    grep -v '^#' ${i}_hmmer_hsp40.domtblout | \
+    awk '$13 <= 1e-3 {print $1}' | sort | uniq > ${i}_pfam_confirmed_ids.txt
 
-    # Step 6: Extract confirmed HSP40 sequences
-    seqkit grep -f ${i}_pfam_confirmed_ids.txt ${i}_blast_hits.fasta > ${i}_confirmed_HSP40.fasta
+    # Step 3: Extract sequences
+    seqkit grep -f ${i}_pfam_confirmed_ids.txt ${i}_longest_isoforms_modified.faa \
+        > ${i}_confirmed_HSP40.fasta
 
-    # Step 7: Remove redundancy (CD-HIT 98% identity)
-    cd-hit -i ${i}_confirmed_HSP40.fasta -o ${i}_HSP40_final_cdhit.faa -c 0.98
+    # Step 4: Remove redundancy
+    cd-hit -i ${i}_confirmed_HSP40.fasta \
+           -o ${i}_HSP40_final_cdhit.faa \
+           -c 0.98
 
     cd ../
 done
 ```
-
-The bash script is
-```
-#!/bin/bash
-
-# Inputs
-BLAST_FILE=$1             # e.g., blast_output.tsv
-FASTA_FILE=$2              # e.g., target_sequences.fasta
-OUTPUT_FASTA=$3            # e.g., extracted_hits.fasta
-
-# Step 1: Filter BLAST hits based on multiple criteria:
-
-awk '$3 >= 40 && $12 > 80 && $11 <= 1e-5 && ($4 / $13) * 100 >= 40 {print $2}' "$BLAST_FILE" | sort | uniq > hit_ids.txt
-
-# Step 2: Extract sequences from FASTA
-seqkit grep -f hit_ids.txt "$FASTA_FILE" > "$OUTPUT_FASTA"
-
-# Summary
-echo "Extracted $(wc -l < hit_ids.txt) sequences passing filters to $OUTPUT_FASTA"
-```
-
-This script
-> makes a blast database for our protein files
-> BLASTS known HSP40s (from the fastas we created) against my species proteins
-> Filters hits by similarity (% identity), alignment length, e-value
-> Validates domains with HMMER
-> Extracts confirmed sequences
-> Removes redundancy with CD-hit
 
 
 
