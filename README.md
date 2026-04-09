@@ -175,15 +175,6 @@ I created protein files for HSP40, HSP70, and HSP90 from uniprot and NCBI. I use
 An example of my search was "HSP40" OR "DNAJ" AND "Calliphoridae" NOT partial NOT low quality". I also did "HSP40" OR "DNAJ" AND "Diptera" NOT partial NOT low quality" and combined everything (i.e., both Diptera + Calliphoridae for each database) into one fasta file per gene family. But when I ran the below script, I ran a couple of the 'classified hsps' in BLAST and they came up with some weird bacterial/fungal stuff. I think it is better to create the .hmm based on domains. For HSP40, these are J-domains. 
 
 I did this instead:
-Filtered the fasta a bit just to remove duplicates (since we used two databases, probably overlap) and by HPD motif
-
-```
-seqkit grep -r -p HPD jdomains_60_80.fasta > jdomains_filtered.fasta
-```
-```
-seqkit rmdup -s jdomains_filtered.fasta > jdomains_nr.fasta
-```
-
 
 ## HMM curation ( this is to ensure everything that we predict has a J domain)
 Download the PFAM hmm library:
@@ -194,7 +185,6 @@ hmmpress Pfam-A.hmm
 ```
 
 locate the domains in each of the sequences in the fasta file:
-
 ```
 hmmscan \
   --cpu 6 \
@@ -304,6 +294,14 @@ done
 
 
 
+Filtered the fasta a bit just to remove duplicates (since we used two databases, probably overlap) and by HPD motif
+
+```
+seqkit grep -r -p HPD jdomains_60_80.fasta > jdomains_filtered.fasta
+```
+```
+seqkit rmdup -s jdomains_filtered.fasta > jdomains_nr.fasta
+```
 
 
 
