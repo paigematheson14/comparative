@@ -338,21 +338,11 @@ for i in 01_hilli 02_quadrimaculata 03_stygia 04_vicina 06_cuprina; do
 done
 ```
 
+## concatenate all of the species confirmed hsp90s into one fasta 
+```cat *_confirmed_HSP90.fasta > all_species_hsp90.fasta```
 
-
-
-
-
-
-Filtered the fasta a bit just to remove duplicates (since we used two databases, probably overlap) and by HPD motif
-
-```
-seqkit grep -r -p HPD jdomains_60_80.fasta > jdomains_filtered.fasta
-```
-```
-seqkit rmdup -s jdomains_filtered.fasta > jdomains_nr.fasta
-```
-
+## Add drosophila genes in 
+Because HSP90 has three different homologs
 
 
 
