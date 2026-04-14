@@ -219,44 +219,120 @@ hmmbuild hsp40.hmm jdomains_aligned.fasta
 ```
 #!/bin/bash -e
 #SBATCH --account=uow03920
-#SBATCH --job-name=HSP40
-#SBATCH --time=4:00:00
+#SBATCH --job-name=HSP90
+#SBATCH --time=1:00:00
 #SBATCH --cpus-per-task=6
 #SBATCH --mem=10G
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=paige.matheson14@gmail.com
-#SBATCH --output HSP40_%j.out
-#SBATCH --error HSP40_%j.err
+#SBATCH --output HSP90_%j.out
+#SBATCH --error HSP90_%j.err
 
-# Purge any loaded modules to avoid conflicts
+# =========================
+# LOAD MODULES
+# =========================
 module purge
+ml BLAST/2.16.0-GCC-12.3.0 SeqKit/2.4.0 HMMER/3.4-GCC-12.3.0 CD-HIT/4.8.1-GCC-11.3.0 BLASTDB GCC/12.3.0
 
-# Load required modules
-ml BLAST/2.16.0-GCC-12.3.0 SeqKit/2.4.0 HMMER/3.4-GCC-12.3.0 CD-HIT/4.8.1-GCC-11.3.0 BLASTDB GCC/12.3.0 
+# =========================
+# GET REFERENCE IDS
+# =========================
+grep ">" hsp90.fasta | sed 's/>//' > ref_ids.txt
 
+# =========================
+# LOOP OVER SPECIES
+# =========================
 for i in 01_hilli 02_quadrimaculata 03_stygia 04_vicina 06_cuprina; do
     cd ${i}
-
     echo "Processing ${i} ..."
 
-    # Step 1: HMM search directly on proteome
+    # ------------------------
+    # Step 1: Make BLAST DB
+    # ------------------------
+    makeblastdb -in ${i}_longest_isoforms_modified.faa -dbtype prot
+
+    # ------------------------
+    # Step 2: Forward BLAST
+    # ------------------------
+    blastp -query ../hsp90.fasta \
+           -db ${i}_longest_isoforms_modified.faa \
+           -out ${i}_HSP90_blastp_results.out \
+           -evalue 1e-10 \
+           -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qlen slen"
+
+    # ------------------------
+    # Step 3: Extract BLAST hits
+    # ------------------------
+    bash ../extract_hsp90.sh \
+         ${i}_HSP90_blastp_results.out \
+         ${i}_longest_isoforms_modified.faa \
+         ${i}_blast_hits.fasta
+
+    # Safety check
+    if [ ! -s ${i}_blast_hits.fasta ]; then
+        echo "WARNING: No BLAST hits for ${i}, skipping..."
+        cd ../
+        continue
+    fi
+
+    # ------------------------
+    # Step 4: Reciprocal BLAST
+    # ------------------------
+    blastp -query ${i}_blast_hits.fasta \
+           -db ../hsp90.fasta \
+           -out ${i}_reciprocal.out \
+           -evalue 1e-10 \
+           -outfmt "6 qseqid sseqid evalue bitscore"
+
+    # Keep best hit per query
+    sort -k1,1 -k4,4nr ${i}_reciprocal.out | awk '!seen[$1]++' > ${i}_reciprocal_best.tsv
+
+    # FIXED RBH FILTER (this was your bug)
+    grep -F -f ../ref_ids.txt ${i}_reciprocal_best.tsv | cut -f1 > ${i}_rbh_ids.txt
+
+    # Safety check
+    if [ ! -s ${i}_rbh_ids.txt ]; then
+        echo "WARNING: No RBH hits found for ${i}, skipping..."
+        cd ../
+        continue
+    fi
+
+    # Extract RBH sequences
+    seqkit grep -f ${i}_rbh_ids.txt ${i}_blast_hits.fasta > ${i}_rbh_hits.fasta
+
+    # ------------------------
+    # Step 5: HMMER validation
+    # ------------------------
     hmmsearch --cpu 4 \
-              --domtblout ${i}_hmmer_hsp40.domtblout \
-              ../hsp40.hmm \
-              ${i}_longest_isoforms_modified.faa
+              --domtblout ${i}_hmmer_hsp90.domtblout \
+              ../hsp90.hmm \
+              ${i}_rbh_hits.fasta
 
-    # Step 2: Filter significant hits
-    grep -v '^#' ${i}_hmmer_hsp40.domtblout | \
-    awk '$13 <= 1e-3 {print $1}' | sort | uniq > ${i}_pfam_confirmed_ids.txt
+    # ------------------------
+    # Step 6: Filter significant hits
+    # ------------------------
+    grep -v '^#' ${i}_hmmer_hsp90.domtblout \
+        | awk '$13 <= 1e-5 {print $1}' \
+        | sort | uniq > ${i}_pfam_confirmed_ids.txt
 
-    # Step 3: Extract sequences
-    seqkit grep -f ${i}_pfam_confirmed_ids.txt ${i}_longest_isoforms_modified.faa \
-        > ${i}_confirmed_HSP40.fasta
+    # Safety check
+    if [ ! -s ${i}_pfam_confirmed_ids.txt ]; then
+        echo "WARNING: No HMM-confirmed HSP90s for ${i}, skipping..."
+        cd ../
+        continue
+    fi
 
-    # Step 4: Remove redundancy
-    cd-hit -i ${i}_confirmed_HSP40.fasta \
-           -o ${i}_HSP40_final_cdhit.faa \
-           -c 0.98
+    # ------------------------
+    # Step 7: Extract confirmed sequences
+    # ------------------------
+    seqkit grep -f ${i}_pfam_confirmed_ids.txt ${i}_rbh_hits.fasta > ${i}_confirmed_HSP90.fasta
+
+    # ------------------------
+    # Step 8: Remove redundancy
+    # ------------------------
+    cd-hit -i ${i}_confirmed_HSP90.fasta \
+           -o ${i}_HSP90_final_cdhit.faa \
+           -c 0.99
 
     cd ../
 done
