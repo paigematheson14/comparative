@@ -342,7 +342,7 @@ done
 ```cat *_confirmed_HSP90.fasta > all_species_hsp90.fasta```
 
 ## Add drosophila genes in 
-Because HSP90 has three different homologs
+Because HSP90 has three different homologs (paralogs), I added in drosophila genes from flybase for hsp83, trap1, and gp93 so when I build the phylogeny i can see what genes are associated with what homologs. The sequences that fall outside of these clusters probably represent isoforms (to remove) 
 
 
 
