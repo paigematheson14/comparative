@@ -206,32 +206,6 @@ Remove duplicate records
 ```
 seqkit rmdup -n hsp40_jdomain.fasta > hsp40_jdomain_dedup.fasta
 ```
-Extract J-domains with length filter
-```
-grep -v '^#' diptera_jdomain.domtblout | \
-awk '$2 ~ /PF00226/ {
-  start=$18;
-  end=$19;
-  len=end-start+1;
-  if(len>=60 && len<=80)
-    print $4 "\t" start "\t" end
-}' > jdomain_coords.tsv
-```
-Extract the sequences
-```
-seqkit subseq \
-  --bed jdomain_coords.tsv \
-  hsp40_jdomain_dedup.fasta \
-  > jdomains_60_80.fasta
-```
-HPD filter
-```
-seqkit grep -s -p HPD jdomains_60_80.fasta > jdomains_filtered.fasta
-```
-Remove duplicates
-```
-seqkit rmdup -s jdomains_filtered.fasta > jdomains_nr.fasta
-```
 Multiple sequence alignment
 ```
 mafft --auto jdomains_nr.fasta > jdomains_aligned.fasta
