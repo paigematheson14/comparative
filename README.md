@@ -35,6 +35,11 @@ EOF
 done
 ```
 
+# Remove duplicate proteins
+I had quite a number of identical sequences in my protein files. Duplicated protein sequences can sometimes arise e.g., if alternative isoforms are treated as distinct proteins (less likely because we selected for the longest isoforms above). They can also arise from fragmented genome assemblies (e.g., a single gene might be split across multiple contigs and braker may predict the same partial gene on both contigs resulting in the same sequence with different headers) or overlapping gene predictions. I removed them to reduce redundancy
+
+```seqkit rmdup -s 06_cuprina_longest_isoforms_modified.faa > 06_cuprina_no_dup_longest_isoforms.fa```
+
 # 2. Run OrthoFinder
 I provided orthofinder with my own Newick tree because OrthoFinder wasn't producing an accurate species tree. It probably wasn't accurate because blowflies are closely related and we didn't have a huge amount of species included.
 
