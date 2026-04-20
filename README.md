@@ -355,10 +355,360 @@ Because HSP90 has three different homologs (paralogs), I added in drosophila gen
 
 
 
+# figuring out the expanding/contracting gene families
+
+# merge eggnog + interproscan annotations for each species 
+```
+llibrary(tidyverse)
+library(dplyr)
 
 
+samples <- c("01_hilli", "02_quadrimaculata", "03_stygia", "04_vicina", "06_cuprina")
+
+for (sample in samples) {
+  # File paths
+  eggnog_gff <- file.path(sample, paste0(sample, "_eggnog.emapper.decorated_modified.gff"))
+  interpro_tsv <- file.path(sample, paste0(sample, "_longest_isoforms_modified.faa.tsv"))
+  
+  cat("Processing:", sample, "\n")
+  
+  #---- 1. Parse EggNOG-mapper GFF3 ----#
+  eggnog <- read_tsv(
+    eggnog_gff,
+    comment = "##",
+    col_names = FALSE
+  )
+  
+  # Filter mRNA rows where em_* annotations are present
+  eggnog_mrna <- eggnog %>% filter(X3 == "mRNA")
+  
+  #---- 2. Extract key fields from attribute column using regex ----#
+  eggnog_clean <- eggnog_mrna %>%
+    transmute(Protein_ID = str_extract(X9, "(?<=ID=)[^;]+"),
+              GO_terms   = str_extract(X9, "(?<=em_GOs=)[^;]+"),
+              KEGG_paths = str_extract(X9, "(?<=em_KEGG_Pathway=)[^;]+"),
+              KEGG_KO    = str_extract(X9, "(?<=em_KEGG_ko=)[^;]+"),
+              BRITE_class= str_extract(X9, "(?<=em_BRITE=)[^;]+"),
+              EggNOG_PFAMs = str_extract(X9, "(?<=em_PFAMs=)[^;]+"),
+              EggNOG_PFAMs_desc = str_extract(X9, "(?<=em_desc=)[^;]+"))
+  
+  # Remove rows with all NA or Protein_ID missing
+  eggnog_clean <- eggnog_clean %>%
+    filter(!is.na(Protein_ID)) %>%
+    group_by(Protein_ID) %>%
+    summarise(across(everything(), ~ toString(na.omit(.))), .groups = "drop") %>%
+    mutate(
+      ID_number = as.numeric(str_extract(Protein_ID, "(?<=g)\\d+"))
+    ) %>%
+    arrange(ID_number) %>%
+    select(-ID_number)
+  
+  #---- 2. Parse InterProScan TSV ----#
+  interpro <- read_tsv(interpro_tsv, col_names = FALSE, comment = "#")
+  
+  # 1. Pfam domains and descriptions (only from source = "Pfam")
+  pfam_data <- interpro %>%
+    filter(X4 == "Pfam") %>%
+    select(Protein_ID = X1, Pfam_ID = X5, Pfam_desc = X6, Pfam_Eval = X9) %>%
+    mutate(Pfam_Eval = as.numeric(Pfam_Eval)) %>%
+    group_by(Protein_ID, Pfam_ID, Pfam_desc) %>%
+    summarise(Min_Eval = min(Pfam_Eval, na.rm = TRUE), .groups = "drop") %>%
+    group_by(Protein_ID) %>%
+    summarise(
+      Pfam_domains = toString(Pfam_ID),
+      Pfam_descriptions = toString(Pfam_desc),
+      Pfam_Evals = toString(Min_Eval),
+      .groups = "drop"
+    )
+  
+  #### Panther fetch
+  panther_data <- interpro %>%
+    filter(X4 == "PANTHER") %>%
+    select(Protein_ID = X1, Panther_ID = X5, Panther_desc = X6, Panther_Eval = X9) %>%
+    mutate(Panther_Eval = as.numeric(Panther_Eval)) %>%
+    group_by(Protein_ID, Panther_ID, Panther_desc) %>%
+    summarise(Min_Eval = min(Panther_Eval, na.rm = TRUE), .groups = "drop") %>%
+    group_by(Protein_ID) %>%
+    summarise(
+      Panther_ID = toString(Panther_ID),
+      Panther_descriptions = toString(Panther_desc),
+      Panther_Evals = toString(Min_Eval),
+      .groups = "drop"
+    )
+  
+  # 2. InterPro IDs and descriptions (from all sources)
+  ipr_data <- interpro %>%
+    select(Protein_ID = X1, InterPro_ID = X12, InterPro_desc = X13) %>%
+    filter(!is.na(InterPro_ID)) %>%
+    group_by(Protein_ID) %>%
+    summarise(
+      InterPro_IDs = toString(unique(na.omit(InterPro_ID))),
+      InterPro_descriptions = toString(unique(na.omit(InterPro_desc))),
+      .groups = "drop"
+    )
+  
+  # 3. GO terms (column X14), clean up GO IDs
+  go_data <- interpro %>%
+    select(Protein_ID = X1, GO = X14) %>%
+    filter(!is.na(GO)) %>%
+    separate_rows(GO, sep = ",\\s*") %>%                              # Split multiple GO term blocks
+    mutate(GO = str_extract_all(GO, "GO:\\d{7}")) %>%                 # Extract only GO:#######
+  unnest(GO) %>%
+    group_by(Protein_ID) %>%
+    summarise(
+      GO_terms_interpro = toString(unique(GO)),
+      .groups = "drop"
+    )
+  
+  # 4. Merge InterProScan pieces
+  interpro_clean <- reduce(
+    list(pfam_data, panther_data, ipr_data, go_data),
+    full_join,
+    by = "Protein_ID"
+  ) %>%
+    mutate(
+      ID_number = as.numeric(str_extract(Protein_ID, "(?<=g)\\d+"))
+    ) %>%
+    arrange(ID_number) %>%
+    select(-ID_number)
+  
+  # 5. Merge with EggNOG annotations (GO terms remain separate)
+  merged_annotations <- full_join(eggnog_clean, interpro_clean, by = "Protein_ID") %>%
+    select(
+      Protein_ID,
+      EggNOG_PFAMs,
+      EggNOG_PFAMs_desc,
+      KEGG_paths,
+      KEGG_KO,
+      BRITE_class,
+      Pfam_domains,
+      Pfam_descriptions,
+      Pfam_Evals,
+      Panther_ID,
+      Panther_descriptions,
+      Panther_Evals,
+      InterPro_IDs,
+      InterPro_descriptions,
+      GO_terms,               # from EggNOG
+      GO_terms_interpro      # cleaned InterProScan GO terms
+    )
+  
+  # 6. Clean NA and export
+  merged_annotations <- merged_annotations %>%
+    mutate(across(everything(), ~str_replace_all(., "NA|^, | ,|, NA", "")))
+  
+  # Reorder columns in the desired order
+  merged_annotations <- merged_annotations %>%
+    select(
+      Protein_ID,
+      EggNOG_PFAMs,
+      EggNOG_PFAMs_desc,
+      GO_terms,             
+      KEGG_KO,
+      KEGG_paths,
+      BRITE_class,
+      Pfam_domains,
+      Pfam_descriptions,
+      Pfam_Evals,
+      InterPro_IDs,
+      InterPro_descriptions,
+      GO_terms_interpro,
+      Panther_ID,
+      Panther_descriptions,
+      Panther_Evals,
+    )
+  colnames(merged_annotations) <- c("Protein_ID", "EggNOG_PFAMs_domains","EggNOG_PFAMs_descriptions", "EggNOG_GO_terms", "EggNOG_KEGG_KO", "EggNOG_KEGG_paths", "EggNOG_BRITE_class", "Interpro_Pfam_Ids",
+                                    "Interpro_Pfam_descriptions", "Interpro_Pfam_Evals", "InterPro_IDs", "InterPro_descriptions", "Interpro_GO_terms", "Panther_ID", "Panther_descriptions", "Panther_Evals")
+  
+  # ---- 4. Write to file ----
+  output_file <- file.path(sample, "merged_protein_annotations.tsv")
+  write_tsv(merged_annotations, output_file)
+}
+```
+
+# annotate the merged annotation file with the orthogroups from orthofinder
+```
+library(dplyr)
+library(readr)
+library(stringr)
+library(tidyr)
+
+# === File paths ===
+orthogroups_file <- "Orthogroups.tsv"
+og_list_dir <- "Orthogroups.tsv"
+annotation_dir <- "01_annotated_genes"
+
+# === Load OrthoFinder orthogroups file ===
+orthogroups <- read_tsv(orthogroups_file)
+
+# Create a long-format OG → gene mapping
+og_gene_map <- orthogroups %>%
+  pivot_longer(-Orthogroup, names_to = "Species", values_to = "Genes") %>%
+  mutate(Genes = strsplit(Genes, ", ")) %>%
+  unnest(Genes) %>%
+  distinct(Orthogroup, Species, Genes)
 
 
+# === Process each species ===
+ann_files <- list.files(annotation_dir, pattern = "_annotated.tsv", full.names = TRUE)
+
+for (ann_file in ann_files) {
+  species <- str_replace(basename(ann_file), "_annotated.tsv", "")
+  message("Processing species: ", species)
+  
+  # Load OG list
+  og_ids <- unique(og_gene_map$Orthogroup)
+  og_subset <- og_gene_map %>%
+    filter(`Orthogroup` %in% og_ids & str_detect(Genes, species))  # Filter OG + species
+  
+  
+  # Load merged annotation
+  annotation_file <- file.path(annotation_dir, paste0(species, "_annotated.tsv"))
+  ann <- read_tsv(annotation_file, show_col_types = FALSE)
+  
+  # Clean GeneID column name
+  colnames(ann)[1] <- "GeneID"
+  
+  
+  # Merge with OG data
+  annotated <- og_subset %>%
+    rename(GeneID = Genes) %>%
+    left_join(ann, by = "GeneID") %>%
+    select(
+      Orthogroup, GeneID,
+      EggNOG_PFAMs_domains,
+      EggNOG_PFAMs_descriptions,
+      EggNOG_GO_terms,
+      EggNOG_KEGG_KO,
+      EggNOG_KEGG_paths,
+      EggNOG_BRITE_class,
+      Interpro_Pfam_Ids,
+      Interpro_Pfam_descriptions,
+      Interpro_Pfam_Evals,
+      InterPro_IDs,
+      InterPro_descriptions,
+      Interpro_GO_terms,
+      Panther_ID, Panther_descriptions, Panther_Evals
+    )
+  
+  # Output file
+  out_file <- file.path("02_annotated_OGs", paste0(species, "_annotated_OGs.tsv"))
+  write_tsv(annotated, out_file)
+  message("[✓] Output written: ", out_file)
+}
+```
+
+# figure out what orthogroups are significant based on the cafe files
+```
+#!/usr/bin/env python3
+
+from collections import defaultdict
+
+input_file = "Gamma_branch_probabilities.tab"
+threshold = 0.05
+
+# Dictionary to hold column name -> list of matching FamilyIDs
+results = defaultdict(list)
+
+with open(input_file) as f:
+    header = f.readline().strip().split("\t")
+
+    for line in f:
+        parts = line.strip().split("\t")
+        family_id = parts[0]
+        for i in range(1, len(parts)):
+            try:
+                val = float(parts[i])
+                if val <= threshold:
+                    results[header[i]].append(family_id)
+            except ValueError:
+                continue  # skip N/A or non-numeric values
+
+# Output CSV-style results
+for col in header[1:]:
+    if results[col]:  # only print columns with at least one match
+        print(f"{col}," + ",".join(results[col]))
+
+# Output one file per column (species)
+for col in header[1:]:
+    if results[col]:  # only if there are matches
+        filename = f"{col}.txt"
+        with open(filename, "w") as out:
+            out.write("\n".join(results[col]) + "\n")
+```
+
+this writes txt files that are used below:
+
+# split into expanding contracting
+```
+# === Libraries ===
+library(readr)
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+# === Input files ===
+gamma_file <- "Gamma_change.tab"
+og_dir <- "01_species_sig_ogs"  # folder containing *_sig_ogs.txt files
+
+# === Read CAFE Gamma_change.tab ===
+gamma <- read_tsv(gamma_file)
+
+# === Clean column names ===
+colnames(gamma)[1] <- "Orthogroup"
+
+# Clean species names
+colnames(gamma) <- str_remove(colnames(gamma), "<.*?>")
+colnames(gamma) <- str_replace(colnames(gamma),
+                               "06_cuprina_longest_isoforms_modified", "06_cuprina")
+colnames(gamma) <- str_replace(colnames(gamma),
+                               "01_hilli_longest_isoforms_modified", "01_hilli")
+colnames(gamma) <- str_replace(colnames(gamma),
+                               "03_stygia_longest_isoforms_modified", "03_stygia")
+colnames(gamma) <- str_replace(colnames(gamma),
+                               "02_quadrimaculata_longest_isoforms_modified", "02_quadrimaculata")
+colnames(gamma) <- str_replace(colnames(gamma),
+                               "04_vicina_longest_isoforms_modified", "04_vicina")
+
+# Remove the model <?> column names
+gamma <- gamma[, !colnames(gamma) %in% c("", ".1", ".2", ".3")]
+
+
+# === Convert to long format ===
+gamma_long <- gamma %>%
+  pivot_longer(-Orthogroup, names_to = "Species", values_to = "Change") %>%
+  mutate(Change = as.numeric(Change)) %>%
+  filter(Change != 0) %>%
+  mutate(Direction = ifelse(Change > 0, "expanded", "contracted"))
+
+# === List species-specific OG files ===
+og_files <- list.files(og_dir, pattern = "_sig_ogs.txt", full.names = TRUE)
+
+# === Process each species ===
+for (og_file in og_files) {
+  
+  # Extract species name from file
+  species <- str_replace(basename(og_file), "_sig_ogs.txt", "")
+  message("Processing species: ", species)
+  
+  # Read significant OGs
+  sig_ogs <- read_lines(og_file)
+  
+  # Match with gamma data
+  changes <- gamma_long %>%
+    filter(Species == species, Orthogroup %in% sig_ogs)
+  
+  # Split into expanded and contracted
+  expanded <- changes %>% filter(Direction == "expanded") %>% pull(Orthogroup)
+  contracted <- changes %>% filter(Direction == "contracted") %>% pull(Orthogroup)
+  
+  # Write to files
+  write_lines(expanded, file.path(og_dir, paste0(species, "_expanded_OGs.txt")))
+  write_lines(contracted, file.path(og_dir, paste0(species, "_contracted_OGs.txt")))
+  
+  message("[✓] ", species, ": ", length(expanded), " expanded, ", length(contracted), " contracted OGs")
+}
+```
 
 
 
