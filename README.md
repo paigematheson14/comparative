@@ -711,6 +711,9 @@ for (og_file in og_files) {
 ```
 
 
+i used the kimura divergence script from earlgrey
+
+```R_LIBS_USER="~/R/x86_64-pc-linux-gnu-library/4.3" Rscript kimura_d.R -s "stygia" -g "03_stygia.filteredRepeats.CAPS.gff" -o .```
 
 
 
