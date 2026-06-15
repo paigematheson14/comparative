@@ -718,5 +718,26 @@ i used the kimura divergence script from earlgrey
 
 
 
+# TE TRIMMER
 
+using the fasta from EarlGREY -- this will improve the earlgrey results 
+
+```
+#!/bin/bash
+#SBATCH --job-name=TEtrimmer_hilli
+#SBATCH --account=uow03920
+#SBATCH --time=12:00:00
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=32G
+#SBATCH --output=TEtrimmer_%j.log
+
+conda activate /nesi/nobackup/uow03920/conda_envs/tetrimmer
+
+TEtrimmer \
+  --input_file 01_hilli_combined_library.fasta \
+  --genome_file ../../37_TE_PROPER/02_earlgrey/01_hilli/01_hilli.fa \
+  --output_dir 01_hilli_TEtrimmer_out \
+  --num_threads 16 \
+  --classify_all
+```
 
